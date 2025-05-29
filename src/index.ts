@@ -3,14 +3,11 @@ import { createHttpTransport } from './transport.js';
 import { createVm } from './tools/create-vm.js';
 import { redeployProject } from './tools/redeploy.js';
 import { getVmStatus, getAllDeployments } from './tools/status.js';
-import { deleteVm, forceDeleteVm } from './tools/delete-vm.js';
 import { 
   DeploymentConfigSchema, 
-  RedeployConfigSchema, 
-  StatusConfigSchema, 
-  DeleteVmConfigSchema 
 } from './types/deployment.js';
 import 'dotenv/config';
+import z from 'zod';
 
 // Create MCP server
 const server = new McpServer({
@@ -18,47 +15,95 @@ const server = new McpServer({
   version: '1.0.0',
 });
 
-// Tool: Create VM and deploy project
+// Tool: Create VM and deploy project (using environment credentials)
 server.tool(
   'create_vm',
   {
-    description: 'Create a new Lightsail VM and deploy a GitHub project with Caddy and Cloudflare DNS',
-    properties: {
-      awsAccessKey: { type: 'string', description: 'AWS Access Key ID' },
-      awsSecretKey: { type: 'string', description: 'AWS Secret Access Key' },
-      awsRegion: { type: 'string', description: 'AWS Region (e.g., us-east-1)' },
-      availabilityZone: { type: 'string', description: 'AWS Availability Zone (e.g., us-east-1a)' },
-      awsSshKey: { type: 'string', description: 'AWS SSH Private Key (PEM format)' },
-      bundleId: { type: 'string', description: 'Lightsail bundle ID (e.g., nano_2_0)' },
-      blueprintId: { type: 'string', description: 'Lightsail blueprint ID (e.g., ubuntu_20_04)' },
-      githubRepoUrl: { type: 'string', description: 'GitHub repository URL' },
-      githubPat: { type: 'string', description: 'GitHub Personal Access Token' },
-      cloudflareZoneId: { type: 'string', description: 'Cloudflare Zone ID' },
-      cloudflareApiToken: { type: 'string', description: 'Cloudflare API Token' },
-      projectName: { type: 'string', description: 'Project name for the deployment' },
-      domain: { type: 'string', description: 'Domain name (optional, defaults to opengig.work)' },
-      accountType: { type: 'string', enum: ['og', 'custom'], description: 'Account type' },
-    },
-    required: [
-      'awsAccessKey', 'awsSecretKey', 'awsRegion', 'availabilityZone', 'awsSshKey',
-      'bundleId', 'blueprintId', 'githubRepoUrl', 'githubPat', 
-      'cloudflareZoneId', 'cloudflareApiToken', 'projectName'
-    ],
+    githubRepoUrl: z.string().describe('GitHub repository URL'),
+    githubPat: z.string().optional().describe('GitHub Personal Access Token (optional, reads from GITHUB_PAT env var)'),
+    projectName: z.string().optional().describe('Project name for the deployment (optional, defaults to repo name)'),
+    domain: z.string().optional().describe('Domain name (optional, defaults to opengig.work)'),
   },
   async (args) => {
     try {
-      const config = DeploymentConfigSchema.parse(args);
-      const result = await createVm(config);
+      console.log('🚀 CREATE_VM TOOL CALLED!');
+      console.log('📥 Received args:', JSON.stringify(args, null, 2));
+      
+      // Extract project name from GitHub URL if not provided
+      const extractProjectName = (url: string) => {
+        if (!url) {
+          console.error('❌ URL is undefined or null');
+          return 'project';
+        }
+        console.log('📝 Extracting project name from:', url);
+        const projectName = url.split('/').pop()?.replace(/\.git$/, '') || 'project';
+        console.log('✅ Project name extracted:', projectName);
+        return projectName;
+      };
+      
+      console.log('🔧 Building deployment config...');
+      const config = {
+        githubRepoUrl: args.githubRepoUrl,
+        githubPat: args.githubPat || process.env.GITHUB_PAT,
+        projectName: args.projectName || extractProjectName(args.githubRepoUrl),
+        domain: args.domain || 'opengig.work',
+        accountType: 'og', // Use environment credentials
+        awsAccessKey: process.env.OPENGIG_AWS_ACCESS_KEY_ID,
+        awsSecretKey: process.env.OPENGIG_AWS_SECRET_ACCESS_KEY,
+        awsRegion: process.env.OPENGIG_AWS_REGION || 'us-east-1',
+        availabilityZone: process.env.OPENGIG_AVAILABILITY_ZONE || 'us-east-1a',
+        awsSshKey: process.env.OPENGIG_AWS_SSH_KEY,
+        bundleId: 'nano_3_1',
+        blueprintId: 'ubuntu_22_04',
+        cloudflareZoneId: process.env.OPENGIG_CLOUDFLARE_ZONE_ID,
+        cloudflareApiToken: process.env.OPENGIG_CLOUDFLARE_API_TOKEN,
+      };
+      
+      console.log('🔍 Validating environment variables...');
+      if (!config.awsAccessKey || !config.awsSecretKey || !config.awsSshKey || !config.cloudflareZoneId || !config.cloudflareApiToken) {
+        console.error('❌ Missing required environment variables');
+        console.error('Missing:', {
+          awsAccessKey: !config.awsAccessKey,
+          awsSecretKey: !config.awsSecretKey,
+          awsSshKey: !config.awsSshKey,
+          cloudflareZoneId: !config.cloudflareZoneId,
+          cloudflareApiToken: !config.cloudflareApiToken
+        });
+        throw new Error('Missing required environment variables. Please set OPENGIG_AWS_ACCESS_KEY_ID, OPENGIG_AWS_SECRET_ACCESS_KEY, OPENGIG_AWS_SSH_KEY, OPENGIG_CLOUDFLARE_ZONE_ID, and OPENGIG_CLOUDFLARE_API_TOKEN');
+      }
+      console.log('✅ All required environment variables are set');
+      
+      // GitHub PAT is optional for public repositories
+      if (!config.githubPat) {
+        console.warn('⚠️  No GitHub PAT provided. This will work for public repositories but may fail for private ones.');
+      } else {
+        console.log('✅ GitHub PAT provided');
+      }
+      
+      console.log('🔄 Validating config schema...');
+      const validatedConfig = DeploymentConfigSchema.parse(config);
+      console.log('✅ Config validation passed');
+      
+      console.log('🚀 Starting VM deployment...');
+      const result = await createVm(validatedConfig);
+      console.log('✅ VM deployment initiated:', result);
       
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(result, null, 2)
+            text: JSON.stringify({
+              deploymentId: result.sessionId,
+              status: 'deploying',
+              message: 'Deployment started. Use the deploymentId to track progress.',
+              progressUrl: `http://localhost:${process.env.PORT || 3000}/sse/${result.sessionId}`
+            }, null, 2)
           }
         ]
       };
     } catch (error) {
+      console.error('❌ CREATE_VM ERROR:', (error as Error).message);
+      console.error('❌ Full error:', error);
       return {
         content: [
           {
@@ -72,26 +117,24 @@ server.tool(
   }
 );
 
-// Tool: Redeploy project
 server.tool(
   'redeploy_project',
   {
-    description: 'Redeploy an existing project by pulling latest code and restarting services',
-    properties: {
-      sessionId: { type: 'string', description: 'Session ID from the original deployment' },
-    },
-    required: ['sessionId'],
+    deploymentId: z.string().describe('Deployment ID from the original deployment'),
   },
   async (args) => {
     try {
-      const { sessionId } = RedeployConfigSchema.parse(args);
-      const result = await redeployProject(sessionId);
+      const result = await redeployProject(args.deploymentId);
       
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(result, null, 2)
+            text: JSON.stringify({
+              deploymentId: args.deploymentId,
+              status: 'redeploying',
+              message: 'Redeployment started'
+            }, null, 2)
           }
         ]
       };
@@ -109,20 +152,25 @@ server.tool(
   }
 );
 
-// Tool: Get VM status
 server.tool(
-  'get_vm_status',
+  'get_deployment_status',
   {
-    description: 'Get the status of a deployed VM and its services',
-    properties: {
-      sessionId: { type: 'string', description: 'Session ID from the deployment' },
-    },
-    required: ['sessionId'],
+    deploymentId: z.string().describe('Deployment ID to check status'),
   },
   async (args) => {
     try {
-      const { sessionId } = StatusConfigSchema.parse(args);
-      return await getVmStatus(sessionId);
+      const status = await getVmStatus(args.deploymentId);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({
+              deploymentId: args.deploymentId,
+              ...status
+            }, null, 2)
+          }
+        ]
+      };
     } catch (error) {
       return {
         content: [
@@ -137,14 +185,9 @@ server.tool(
   }
 );
 
-// Tool: Get all deployments
 server.tool(
   'get_all_deployments',
-  {
-    description: 'Get a list of all active deployments',
-    properties: {},
-    required: [],
-  },
+  {},
   async () => {
     try {
       return await getAllDeployments();
@@ -162,26 +205,26 @@ server.tool(
   }
 );
 
-// Tool: Delete VM
+// Tool: Delete VM (commented out for now)
+/*
 server.tool(
-  'delete_vm',
+  'delete_deployment',
   {
-    description: 'Delete a VM and clean up all associated resources',
-    properties: {
-      sessionId: { type: 'string', description: 'Session ID from the deployment' },
-    },
-    required: ['sessionId'],
+    deploymentId: z.string().describe('Deployment ID to delete'),
   },
   async (args) => {
     try {
-      const { sessionId } = DeleteVmConfigSchema.parse(args);
-      const result = await deleteVm(sessionId);
+      const result = await deleteVm(args.deploymentId);
       
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(result, null, 2)
+            text: JSON.stringify({
+              deploymentId: args.deploymentId,
+              status: 'deleted',
+              message: 'Deployment deleted successfully'
+            }, null, 2)
           }
         ]
       };
@@ -199,26 +242,25 @@ server.tool(
   }
 );
 
-// Tool: Force delete VM
+// Tool: Force delete VM (commented out for now)
 server.tool(
-  'force_delete_vm',
+  'force_delete_deployment',
   {
-    description: 'Force delete a VM session (use when normal delete fails)',
-    properties: {
-      sessionId: { type: 'string', description: 'Session ID from the deployment' },
-    },
-    required: ['sessionId'],
+    deploymentId: z.string().describe('Deployment ID to force delete'),
   },
   async (args) => {
     try {
-      const { sessionId } = DeleteVmConfigSchema.parse(args);
-      const result = await forceDeleteVm(sessionId);
+      const result = await forceDeleteVm(args.deploymentId);
       
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(result, null, 2)
+            text: JSON.stringify({
+              deploymentId: args.deploymentId,
+              status: 'force_deleted',
+              message: 'Deployment force deleted'
+            }, null, 2)
           }
         ]
       };
@@ -235,6 +277,7 @@ server.tool(
     }
   }
 );
+*/
 
 // Create HTTP transport and start server
 const app = createHttpTransport(server);

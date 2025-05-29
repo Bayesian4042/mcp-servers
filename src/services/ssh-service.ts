@@ -11,14 +11,38 @@ export class SSHService {
 
   async connect(publicIp: string, sshKey: string): Promise<void> {
     try {
+      // Process the SSH key to handle different formats
+      let processedKey = sshKey;
+      
+      // If the key has \n characters, replace them with actual newlines
+      if (processedKey.includes('\\n')) {
+        processedKey = processedKey.replace(/\\n/g, '\n');
+      }
+      
+      // Remove any extra quotes that might be present
+      processedKey = processedKey.replace(/^"|"$/g, '');
+      
+      // Ensure the key starts and ends with proper markers
+      if (!processedKey.includes('-----BEGIN')) {
+        throw new Error('SSH key must be in PEM format starting with -----BEGIN');
+      }
+      
+      console.log('🔑 SSH Key format check:');
+      console.log('- Starts with BEGIN:', processedKey.includes('-----BEGIN'));
+      console.log('- Ends with END:', processedKey.includes('-----END'));
+      console.log('- Has newlines:', processedKey.includes('\n'));
+      console.log('- Key length:', processedKey.length);
+      
       await this.ssh.connect({
         host: publicIp,
         username: 'ubuntu',
-        privateKey: sshKey,
+        privateKey: processedKey,
         readyTimeout: 100000,
       });
       this.connected = true;
+      console.log('✅ SSH connection successful!');
     } catch (error) {
+      console.error('❌ SSH connection error:', (error as Error).message);
       throw new Error(`SSH connection failed: ${(error as Error).message}`);
     }
   }
