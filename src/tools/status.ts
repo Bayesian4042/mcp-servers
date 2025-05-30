@@ -1,11 +1,11 @@
 import { sessionManager } from '../utils/session-manager.js';
 import { AWSService } from '../services/aws-service.js';
 
-export async function getVmStatus(sessionId: string): Promise<any> {
-  const session = sessionManager.getSession(sessionId);
+export async function getVmStatus(deploymentId: string): Promise<any> {
+  const session = sessionManager.getSession(deploymentId);
   
   if (!session) {
-    throw new Error('Session not found');
+    throw new Error('Deployment not found');
   }
 
   try {
@@ -17,7 +17,7 @@ export async function getVmStatus(sessionId: string): Promise<any> {
     }
 
     const status = {
-      sessionId: session.sessionId,
+      deploymentId: session.deploymentId,
       status: session.status,
       instanceName: session.instanceName,
       publicIp: session.publicIp,
@@ -64,7 +64,7 @@ export async function getAllDeployments(): Promise<any> {
     const sessions = sessionManager.getAllSessions();
     
     const deployments = sessions.map(session => ({
-      sessionId: session.sessionId,
+      deploymentId: session.deploymentId,
       status: session.status,
       instanceName: session.instanceName,
       publicIp: session.publicIp,

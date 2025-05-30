@@ -23,6 +23,8 @@ export const DeploymentConfigSchema = z.object({
   projectName: z.string().min(1, 'Project name is required'),
   domain: z.string().optional(),
   accountType: z.enum(['og', 'custom']).default('custom'),
+  
+  deploymentId: z.string().min(1, 'Deployment ID is required'),
 });
 
 export const RedeployConfigSchema = z.object({
@@ -53,10 +55,11 @@ export interface DeploymentConfig {
   projectName: string;
   domain?: string;
   accountType: 'og' | 'custom';
+  deploymentId: string;
 }
 
 export interface DeploymentState {
-  sessionId: string;
+  deploymentId: string;
   status: 'deploying' | 'success' | 'failed' | 'redeploying';
   instanceName?: string;
   publicIp?: string;

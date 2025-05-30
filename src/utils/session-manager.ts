@@ -7,11 +7,11 @@ export class SessionManager extends EventEmitter {
   private sessionTimeouts: Map<string, NodeJS.Timeout> = new Map();
   private readonly SESSION_TIMEOUT = 30 * 60 * 1000; // 30 minutes
 
-  createSession(config: any): string {
-    const sessionId = uuidv4();
+  createSession(config: any, deploymentId?: string): string {
+    const sessionId = deploymentId || uuidv4();
     
     const deploymentState: DeploymentState = {
-      sessionId,
+      deploymentId: sessionId,
       status: 'deploying',
       config,
       logs: [],
@@ -24,94 +24,94 @@ export class SessionManager extends EventEmitter {
     return sessionId;
   }
 
-  getSession(sessionId: string): DeploymentState | undefined {
-    return this.sessions.get(sessionId);
+  getSession(deploymentId: string): DeploymentState | undefined {
+    return this.sessions.get(deploymentId);
   }
 
-  updateSession(sessionId: string, updates: Partial<DeploymentState>): void {
-    const session = this.sessions.get(sessionId);
+  updateSession(deploymentId: string, updates: Partial<DeploymentState>): void {
+    const session = this.sessions.get(deploymentId);
     if (session) {
       Object.assign(session, updates);
-      this.sessions.set(sessionId, session);
-      this.refreshSessionTimeout(sessionId);
+      this.sessions.set(deploymentId, session);
+      this.refreshSessionTimeout(deploymentId);
     }
   }
 
-  deleteSession(sessionId: string): void {
-    this.sessions.delete(sessionId);
-    const timeout = this.sessionTimeouts.get(sessionId);
+  deleteSession(deploymentId: string): void {
+    this.sessions.delete(deploymentId);
+    const timeout = this.sessionTimeouts.get(deploymentId);
     if (timeout) {
       clearTimeout(timeout);
-      this.sessionTimeouts.delete(sessionId);
+      this.sessionTimeouts.delete(deploymentId);
     }
   }
 
-  emitEvent(sessionId: string, event: SSEEvent): void {
-    this.emit(`session:${sessionId}`, event);
+  emitEvent(deploymentId: string, event: SSEEvent): void {
+    this.emit(`deployment:${deploymentId}`, event);
   }
 
-  emitProgress(sessionId: string, message: string, data?: any): void {
-    this.emitEvent(sessionId, {
+  emitProgress(deploymentId: string, message: string, data?: any): void {
+    this.emitEvent(deploymentId, {
       type: 'progress',
       data: { message, ...data },
       timestamp: new Date(),
     });
   }
 
-  emitLog(sessionId: string, log: any): void {
-    const session = this.getSession(sessionId);
+  emitLog(deploymentId: string, log: any): void {
+    const session = this.getSession(deploymentId);
     if (session) {
       session.logs.push(log);
-      this.updateSession(sessionId, { logs: session.logs });
+      this.updateSession(deploymentId, { logs: session.logs });
     }
 
-    this.emitEvent(sessionId, {
+    this.emitEvent(deploymentId, {
       type: 'log',
       data: log,
       timestamp: new Date(),
     });
   }
 
-  emitError(sessionId: string, error: string): void {
-    this.updateSession(sessionId, { status: 'failed', error });
-    this.emitEvent(sessionId, {
+  emitError(deploymentId: string, error: string): void {
+    this.updateSession(deploymentId, { status: 'failed', error });
+    this.emitEvent(deploymentId, {
       type: 'error',
       data: { error },
       timestamp: new Date(),
     });
   }
 
-  emitComplete(sessionId: string, data: any): void {
-    this.updateSession(sessionId, { status: 'success' });
-    this.emitEvent(sessionId, {
+  emitComplete(deploymentId: string, data: any): void {
+    this.updateSession(deploymentId, { status: 'success' });
+    this.emitEvent(deploymentId, {
       type: 'complete',
       data,
       timestamp: new Date(),
     });
   }
 
-  emitStatus(sessionId: string, status: any): void {
-    this.emitEvent(sessionId, {
+  emitStatus(deploymentId: string, status: any): void {
+    this.emitEvent(deploymentId, {
       type: 'status',
       data: status,
       timestamp: new Date(),
     });
   }
 
-  private setSessionTimeout(sessionId: string): void {
+  private setSessionTimeout(deploymentId: string): void {
     const timeout = setTimeout(() => {
-      this.deleteSession(sessionId);
+      this.deleteSession(deploymentId);
     }, this.SESSION_TIMEOUT);
     
-    this.sessionTimeouts.set(sessionId, timeout);
+    this.sessionTimeouts.set(deploymentId, timeout);
   }
 
-  private refreshSessionTimeout(sessionId: string): void {
-    const existingTimeout = this.sessionTimeouts.get(sessionId);
+  private refreshSessionTimeout(deploymentId: string): void {
+    const existingTimeout = this.sessionTimeouts.get(deploymentId);
     if (existingTimeout) {
       clearTimeout(existingTimeout);
     }
-    this.setSessionTimeout(sessionId);
+    this.setSessionTimeout(deploymentId);
   }
 
   getAllSessions(): DeploymentState[] {

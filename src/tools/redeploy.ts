@@ -1,83 +1,59 @@
 import { SSHService } from '../services/ssh-service.js';
 import { sessionManager } from '../utils/session-manager.js';
 
-export async function redeployProject(sessionId: string): Promise<{ message: string }> {
-  const session = sessionManager.getSession(sessionId);
-  
-  if (!session) {
-    throw new Error('Session not found');
+export async function redeployProject(vmIpAddress: string, projectName: string): Promise<{ message: string }> {
+  // Validate environment variables for SSH key
+  const sshKey = process.env.OPENGIG_AWS_SSH_KEY;
+  if (!sshKey) {
+    throw new Error('Missing SSH key. Please set OPENGIG_AWS_SSH_KEY environment variable.');
   }
-
-  if (!session.instanceName || !session.publicIp) {
-    throw new Error('Deployment information not found in session');
-  }
-
-  // Update session status
-  sessionManager.updateSession(sessionId, { 
-    status: 'redeploying',
-    lastDeployedAt: new Date()
-  });
 
   // Start the redeployment process asynchronously
-  redeployAsync(sessionId, session).catch(error => {
-    sessionManager.emitError(sessionId, error.message);
+  redeployAsync(vmIpAddress, projectName, sshKey).catch(error => {
+    console.error('Redeployment error:', error.message);
   });
 
   return {
-    message: 'Redeployment started. Track progress via SSE.',
+    message: 'Redeployment started.',
   };
 }
 
-async function redeployAsync(sessionId: string, session: any): Promise<void> {
+async function redeployAsync(vmIpAddress: string, projectName: string, sshKey: string): Promise<void> {
   let sshService: SSHService | null = null;
 
   try {
-    sessionManager.emitProgress(sessionId, 'Starting redeployment...');
+    console.log('Starting redeployment...');
 
     // Initialize SSH service
     sshService = new SSHService();
 
     // Connect via SSH
-    sessionManager.emitProgress(sessionId, 'Connecting to server...');
-    await sshService.connect(session.publicIp, session.config.awsSshKey);
+    console.log('Connecting to server...');
+    await sshService.connect(vmIpAddress, sshKey);
 
     // Execute redeployment commands
-    sessionManager.emitProgress(sessionId, 'Pulling latest code and restarting services...');
-    const redeployLogs = await sshService.executeRedeployCommands(session.instanceName);
+    console.log('Pulling latest code and restarting services...');
+    const redeployLogs = await sshService.executeRedeployCommands(projectName);
     
-    // Emit each log
+    // Log each command result
     for (const log of redeployLogs) {
-      sessionManager.emitLog(sessionId, log);
+      console.log('Redeploy log:', log);
     }
 
     // Disconnect SSH
     sshService.disconnect();
 
-    // Complete redeployment
-    const redeploymentInfo = {
-      instanceName: session.instanceName,
-      publicIp: session.publicIp,
-      dnsName: session.dnsName,
-      url: `https://${session.dnsName}`,
-      status: 'success',
-      redeployedAt: new Date(),
-    };
-
-    sessionManager.updateSession(sessionId, { 
-      status: 'success',
-      lastDeployedAt: new Date()
-    });
-
-    sessionManager.emitComplete(sessionId, redeploymentInfo);
-    sessionManager.emitProgress(sessionId, `Redeployment complete! Your application is available at: https://${session.dnsName}`);
+    console.log(`Redeployment complete for project: ${projectName} at IP: ${vmIpAddress}`);
 
   } catch (error) {
     const errorMessage = (error as Error).message;
-    sessionManager.emitError(sessionId, errorMessage);
+    console.error('Redeployment error:', errorMessage);
 
     // Disconnect SSH if connected
     if (sshService) {
       sshService.disconnect();
     }
+    
+    throw error;
   }
 }
